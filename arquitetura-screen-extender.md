@@ -166,3 +166,41 @@ Cada fase é testável isoladamente antes de emendar na próxima — evita depur
 | UI do cliente | Avalonia UI |
 | Rede | System.Net.Sockets (TCP + UDP broadcast) puro |
 | Protocolo | Binário customizado, definido no projeto Shared |
+
+
+## Atualização 03/09/2026:
+
+Ambiente de Desenvolvimento (.NET)
+
+SDK: .NET 10 installed on both machines (Windows and Linux).
+
+Workloads/Packages: ZstdSharp.Port (v3.x+) added to both Windows.csproj and Linux.csproj.
+
+Configuração do Servidor (Windows)
+
+OS: Windows 10/11 (x64) with DirectX 11 support.
+
+Network Adapter: Physical Ethernet interface configured for Direct Cable Link (APIPA / Link-Local addressing in 169.254.x.x subnet).
+
+Firewall Rules (Inbound Rules): Must allow traffic on application ports via PowerShell (Administrator):
+
+PowerShell
+New-NetFirewallRule -DisplayName "ScreenExtender UDP" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 45678
+New-NetFirewallRule -DisplayName "ScreenExtender TCP" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 45679
+Configuração do Cliente (Ubuntu Linux)
+
+OS: Ubuntu 22.04 LTS / 24.04 LTS or compatible Debian-based system.
+
+Network Interface: Physical Ethernet port (enp2s0 or equivalent) configured to Link-Local Only mode in NetworkManager settings.
+
+Dependencies: Standard X11/Wayland graphical stack for Avalonia UI rendering support.
+
+Topologia de Rede & Portas
+
+Connection Type: Direct Point-to-Point Ethernet cable (Cat5e or Cat6).
+
+Subnet: APIPA Automatic Allocation (169.254.0.0/16).
+
+UDP Port 45678: Network Discovery & Auto-Handshake.
+
+TCP Port 45679: High-performance compressed frame streaming (NoDelay low-latency socket).
