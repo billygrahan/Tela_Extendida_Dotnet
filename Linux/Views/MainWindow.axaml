@@ -1,0 +1,17 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Linux.Views.MainWindow"
+        Title="ScreenExtender Client"
+        WindowState="FullScreen"
+        SystemDecorations="None"
+        CanResize="False"
+        Background="Black"
+        Cursor="None">
+
+    <Grid>
+        <!-- Controle de Imagem responsivo para cobrir a tela inteira -->
+        <Image x:Name="ScreenImage" 
+               Stretch="Fill" 
+               RenderOptions.BitmapInterpolationMode="LowQuality" />
+    </Grid>
+</Window>

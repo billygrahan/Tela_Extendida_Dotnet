@@ -11,55 +11,63 @@ namespace Linux.Network;
 public class FrameReceiver
 {
     private readonly Decompressor _decompressor = new();
+    
+    // Action: x, y, width, height, rawPixelData
+    public event Action<int, int, int, int, byte[]>? OnFrameUnpacked;
 
     public async Task ConnectAndReceiveAsync(IPAddress serverIp)
     {
         using var client = new TcpClient();
-        client.NoDelay = true;
+        await client.ConnectAsync(serverIp, 45679);
 
-        Console.WriteLine($"[FrameReceiver] Conectando ao servidor TCP {serverIp}:{Constants.StreamPort}...");
-        await client.ConnectAsync(serverIp, Constants.StreamPort);
+        client.NoDelay = true;
+        client.SendBufferSize = 1024 * 1024;
+        client.ReceiveBufferSize = 1024 * 1024;
 
         using var stream = client.GetStream();
-        using var reader = new BinaryReader(stream);
-
-        Console.WriteLine("[FrameReceiver] Conectado! Recebendo fluxo de dados de vídeo...\n");
+        byte[] lengthBuffer = new byte[4];
 
         while (client.Connected)
         {
-            // 1. Lê o tamanho do próximo pacote
-            byte[] sizeBuffer = new byte[4];
-            int bytesRead = await stream.ReadAsync(sizeBuffer, 0, 4);
-            if (bytesRead < 4) break;
+            // 1. Lê exatamente 4 bytes do cabeçalho com o tamanho do pacote
+            if (!await ReadExactAsync(stream, lengthBuffer, 0, 4)) break;
 
-            int packetSize = BitConverter.ToInt32(sizeBuffer, 0);
-            byte[] packetBuffer = new byte[packetSize];
+            int packetSize = BitConverter.ToInt32(lengthBuffer, 0);
+            if (packetSize <= 0) continue;
 
-            // 2. Garante a leitura completa do pacote
-            int totalRead = 0;
-            while (totalRead < packetSize)
+            byte[] packetBytes = new byte[packetSize];
+
+            // 2. Lê exatamente o tamanho total do pacote comprimido
+            if (!await ReadExactAsync(stream, packetBytes, 0, packetSize)) break;
+
+            // 3. Deserializa e descompacta o frame
+            using var ms = new MemoryStream(packetBytes);
+            using var reader = new BinaryReader(ms);
+
+            var frameHeader = FrameHeader.Deserialize(reader);
+            if (frameHeader.RectCount > 0)
             {
-                int read = await stream.ReadAsync(packetBuffer, totalRead, packetSize - totalRead);
-                if (read == 0) break;
-                totalRead += read;
-            }
+                var rectHeader = RectHeader.Deserialize(reader);
+                byte[] compressedData = reader.ReadBytes(rectHeader.CompressedDataSize);
 
-            // 3. Processa o pacote
-            using var ms = new MemoryStream(packetBuffer);
-            using var packetReader = new BinaryReader(ms);
+                byte[] rawPixels = _decompressor.Unwrap(compressedData).ToArray();
 
-            var frameHeader = FrameHeader.Deserialize(packetReader);
-
-            for (int i = 0; i < frameHeader.RectCount; i++)
-            {
-                var rectHeader = RectHeader.Deserialize(packetReader);
-                byte[] compressedBytes = packetReader.ReadBytes(rectHeader.CompressedDataSize);
-
-                // Descomprime os dados Zstd em memória
-                ReadOnlySpan<byte> decompressedPixels = _decompressor.Unwrap(compressedBytes);
-
-                Console.WriteLine($"[Frame Recebido] Região: {rectHeader.Width}x{rectHeader.Height} em ({rectHeader.X},{rectHeader.Y}) | Tamanho comprimido: {rectHeader.CompressedDataSize} bytes | Pixels: {decompressedPixels.Length} bytes");
+                // Dispara o evento para atualizar a UI
+                OnFrameUnpacked?.Invoke(rectHeader.X, rectHeader.Y, rectHeader.Width, rectHeader.Height, rawPixels);
             }
         }
+    }
+
+    // Método auxiliar essencial para evitar leitura parcial na rede TCP
+    private async Task<bool> ReadExactAsync(Stream stream, byte[] buffer, int offset, int count)
+    {
+        int totalRead = 0;
+        while (totalRead < count)
+        {
+            int read = await stream.ReadAsync(buffer, offset + totalRead, count - totalRead);
+            if (read == 0) return false; // Conexão encerrada
+            totalRead += read;
+        }
+        return true;
     }
 }
