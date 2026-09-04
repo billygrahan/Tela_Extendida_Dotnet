@@ -4,76 +4,44 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Shared;
-using ZstdSharp;
+using Windows.Capture;
 
 namespace Windows.Network;
 
 public class FrameStreamer
 {
-    private readonly TcpListener _listener;
-    private TcpClient? _client;
-    private NetworkStream? _stream;
-    private readonly Compressor _compressor = new(level: 3); // Nível de compressão ideal para baixa latência
+    private TcpListener? _listener;
 
-    public FrameStreamer()
+    public async Task Start()
     {
-        // Escuta em todas as placas de rede disponíveis na máquina
         _listener = new TcpListener(IPAddress.Any, Constants.StreamPort);
-    }
-
-    public void Start()
-    {
         _listener.Start();
-        Console.WriteLine($"[FrameStreamer] Aguardando conexão TCP do cliente na porta {Constants.StreamPort}...");
 
-        Task.Run(async () =>
+        Console.WriteLine($"[FrameStreamer] Escutando na porta TCP {Constants.StreamPort}...");
+
+        while (true)
         {
-            _client = await _listener.AcceptTcpClientAsync();
-            _client.NoDelay = true; // Desabilita o algoritmo de Nagle para latência mínima
-            _stream = _client.GetStream();
-            Console.WriteLine($"[FrameStreamer] Cliente conectado de: {_client.Client.RemoteEndPoint}");
-        });
-    }
-
-    public bool IsConnected => _client is { Connected: true } && _stream != null;
-
-    public void SendDirtyRect(int x, int y, int width, int height, byte[] rawPixelData)
-    {
-        if (!IsConnected || _stream == null) return;
-
-        try
-        {
-            // Comprime os pixels da região usando Zstd
-            ReadOnlySpan<byte> compressedData = _compressor.Wrap(rawPixelData);
-
-            using var memoryStream = new MemoryStream();
-            using var writer = new BinaryWriter(memoryStream);
-
-            // Escreve os cabeçalhos e os dados comprimidos
-            var frameHeader = new FrameHeader { RectCount = 1 };
-            frameHeader.Serialize(writer);
-
-            var rectHeader = new RectHeader
+            try
             {
-                X = x,
-                Y = y,
-                Width = width,
-                Height = height,
-                CompressedDataSize = compressedData.Length
-            };
-            rectHeader.Serialize(writer);
-            writer.Write(compressedData);
+                var client = await _listener.AcceptTcpClientAsync();
 
-            byte[] packet = memoryStream.ToArray();
+                // Desativa o algoritmo de Nagle e aumenta os buffers para zerar a latência do streaming
+                client.NoDelay = true;
+                client.SendBufferSize = 1024 * 1024;
+                client.ReceiveBufferSize = 1024 * 1024;
 
-            // Manda o tamanho do pacote total seguido pelo payload
-            byte[] sizeHeader = BitConverter.GetBytes(packet.Length);
-            _stream.Write(sizeHeader, 0, 4);
-            _stream.Write(packet, 0, packet.Length);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Streamer Error] Falha ao enviar frame: {ex.Message}");
+                Console.WriteLine($"\n[FrameStreamer] CLIENTE CONECTADO de {client.Client.RemoteEndPoint}!");
+
+                using var stream = client.GetStream();
+                var capturer = new DxgiCapturer();
+
+                // Inicia a captura via DXGI e envia os frames pela stream TCP
+                await capturer.StartCaptureAndStreamAsync(stream);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FrameStreamer Error] Cliente desconectado ou erro: {ex.Message}");
+            }
         }
     }
 }

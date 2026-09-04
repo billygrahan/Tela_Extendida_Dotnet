@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
+using Windows.Capture;
 using Windows.Network;
 
 namespace Windows;
@@ -8,6 +11,7 @@ class Program
 {
     static void Main(string[] args)
     {
+
         Console.WriteLine("=== ScreenExtender Server (Windows) ===");
 
         // 1. Inicia o transmissor UDP de anúncios de rede
