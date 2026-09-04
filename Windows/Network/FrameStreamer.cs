@@ -17,6 +17,7 @@ public class FrameStreamer
 
     public FrameStreamer()
     {
+        // Escuta em todas as placas de rede disponíveis na máquina
         _listener = new TcpListener(IPAddress.Any, Constants.StreamPort);
     }
 

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using Windows.Network;
 
 namespace Windows;
@@ -9,22 +10,28 @@ class Program
     {
         Console.WriteLine("=== ScreenExtender Server (Windows) ===");
 
+        // 1. Inicia o transmissor UDP de anúncios de rede
         var broadcaster = new DiscoveryBroadcaster();
         broadcaster.Start();
 
+        // 2. Inicia o servidor TCP de streaming de telas
         var streamer = new FrameStreamer();
         streamer.Start();
 
-        Console.WriteLine("\nServidor pronto. Inicie o cliente no Linux e pressione qualquer tecla para enviar um frame de teste...");
-        Console.ReadKey();
+        Console.WriteLine("\n[Servidor Ativo e Aguardando Conexões]");
+        Console.WriteLine("Pressione CTRL+C no terminal do Windows para encerrar.\n");
 
-        // Envia uma região de teste de 100x100 com pixels fake
-        byte[] fakePixels = new byte[100 * 100 * 4];
-        Array.Fill<byte>(fakePixels, 255); // Preenche buffer simulando pixels RGBA
+        // 3. Bloqueia a thread principal para manter o servidor aberto
+        var exitEvent = new ManualResetEvent(false);
+        Console.CancelKeyPress += (sender, eventArgs) =>
+        {
+            Console.WriteLine("\nEncerrando o servidor...");
+            eventArgs.Cancel = true;
+            broadcaster.Stop();
+            exitEvent.Set();
+        };
 
-        streamer.SendDirtyRect(0, 0, 100, 100, fakePixels);
-
-        Console.WriteLine("Frame enviado! Verifique o console do Linux.");
-        Console.ReadLine();
+        exitEvent.WaitOne();
+        Console.WriteLine("Servidor finalizado com sucesso.");
     }
 }
