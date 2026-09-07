@@ -1,2 +1,2 @@
-# Tela_Extendida_Dotnet
-Sistema de tela estendida Windows/Linux
+# WinToLin
+Extensor de Tela Multiplataforma via Rede Local
