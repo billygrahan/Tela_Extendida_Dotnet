@@ -8,7 +8,7 @@ public static class StreamSettings
     public const string DiscoveryMagicHeader = "SCRN_EXT_DISC_V1";
 
     // Captura e codificacao
-    public const int TargetOutputIndex = 0;
+    public const int TargetOutputIndex = 1;
     public const int TargetFps = 60;
     public const int BitRate = 12_000_000;
     public const int KeyFrameInterval = 30;

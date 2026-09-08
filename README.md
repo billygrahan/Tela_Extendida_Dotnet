@@ -167,7 +167,7 @@ Os valores ajustáveis estão centralizados em [Shared/StreamSettings.cs](Shared
 
 | Variável | Valor atual | Função |
 |---|---:|---|
-| `TargetOutputIndex` | `0` | Índice do monitor DXGI capturado |
+| `TargetOutputIndex` | `1` | Índice do monitor DXGI capturado; o log do servidor lista os outputs |
 | `TargetFps` | `60` | Taxa desejada do encoder |
 | `BitRate` | `12000000` | Bitrate H.264 em bits por segundo |
 | `KeyFrameInterval` | `30` | Intervalo entre keyframes |
@@ -183,7 +183,7 @@ Os valores ajustáveis estão centralizados em [Shared/StreamSettings.cs](Shared
 | `DiscoveryPort` | `45678` | Porta de descoberta UDP |
 | `StreamPort` | `45679` | Porta do vídeo TCP |
 
-A resolução não é definida manualmente no momento: ela é obtida do monitor retornado pelo DXGI. Para mudar o monitor capturado, altere `TargetOutputIndex`.
+A resolução não é definida manualmente no momento: ela é obtida do monitor retornado pelo DXGI. O índice `1` foi definido como padrão para capturar o segundo output, normalmente a tela virtual. O servidor imprime linhas `[DXGI] Output ...` com o nome e a resolução de cada monitor; altere `TargetOutputIndex` se a tela virtual aparecer em outro índice.
 
 ## Diagnóstico rápido
 

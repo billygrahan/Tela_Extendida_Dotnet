@@ -101,15 +101,35 @@ public class DxgiCapturer
         using var adapter = dxgiDevice.GetAdapter();
 
         IDXGIOutput? targetOutput = null;
-        var outputResult = adapter.EnumOutputs(StreamSettings.TargetOutputIndex, out var firstOutput);
-        if (outputResult.Success)
+        for (uint outputIndex = 0; ; outputIndex++)
         {
-            targetOutput = firstOutput;
+            var outputResult = adapter.EnumOutputs(outputIndex, out var output);
+            if (!outputResult.Success)
+            {
+                break;
+            }
+
+            var outputDescription = output.Description;
+            Console.WriteLine(
+                $"[DXGI] Output {outputIndex}: {outputDescription.DeviceName} " +
+                $"({outputDescription.DesktopCoordinates.Left},{outputDescription.DesktopCoordinates.Top}) " +
+                $"{outputDescription.DesktopCoordinates.Right - outputDescription.DesktopCoordinates.Left}x" +
+                $"{outputDescription.DesktopCoordinates.Bottom - outputDescription.DesktopCoordinates.Top}");
+
+            if (outputIndex == StreamSettings.TargetOutputIndex)
+            {
+                targetOutput = output;
+            }
+            else
+            {
+                output.Dispose();
+            }
         }
 
         if (targetOutput == null)
         {
-            throw new InvalidOperationException("Nenhum monitor DXGI foi encontrado para captura.");
+            throw new InvalidOperationException(
+                $"O output DXGI de índice {StreamSettings.TargetOutputIndex} não foi encontrado.");
         }
 
         using var output1 = targetOutput.QueryInterface<IDXGIOutput1>();
