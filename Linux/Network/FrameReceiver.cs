@@ -1,7 +1,6 @@
 ﻿using System;
 using System.IO;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using FFmpeg.AutoGen;
 
@@ -15,18 +14,6 @@ public class FrameReceiver
     private unsafe SwsContext* _swsContext;
 
     public event Action<int, int, int, int, byte[]>? OnFrameUnpacked;
-
-    // Mapeamento direto da função nativa da biblioteca libswscale
-    [DllImport("libswscale", CallingConvention = CallingConvention.Cdecl)]
-    private static unsafe extern int sws_scale(
-        void* c,
-        byte** srcSlice,
-        int* srcStride,
-        int srcSliceY,
-        int srcSliceH,
-        byte** dst,
-        int* dstStride
-    );
 
     private unsafe void InitDecoder()
     {
@@ -133,27 +120,27 @@ public class FrameReceiver
 
         fixed (byte* ptrBgra = bgraBuffer)
         {
-            byte*[] dstDataArr = new byte*[] { ptrBgra, null, null, null };
-            int[] dstLinesizeArr = new int[] { width * 4, 0, 0, 0 };
+            byte*[] dstData = new byte*[] { ptrBgra, null, null, null };
+            int[] dstLinesize = new int[] { width * 4, 0, 0, 0 };
 
-            fixed (byte** pDstData = dstDataArr)
+            byte*[] srcData = new byte*[4];
+            int[] srcLinesize = new int[4];
+
+            for (uint i = 0; i < 4; i++)
             {
-                fixed (int* pDstLinesize = dstLinesizeArr)
-                {
-                    byte** pSrcData = (byte**)&(frame->data);
-                    int* pSrcLinesize = (int*)&(frame->linesize);
-
-                    sws_scale(
-                        _swsContext,
-                        pSrcData,
-                        pSrcLinesize,
-                        0,
-                        height,
-                        pDstData,
-                        pDstLinesize
-                    );
-                }
+                srcData[i] = frame->data[i];
+                srcLinesize[i] = frame->linesize[i];
             }
+
+            ffmpeg.sws_scale(
+                _swsContext,
+                srcData,
+                srcLinesize,
+                0,
+                height,
+                dstData,
+                dstLinesize
+            );
         }
 
         return bgraBuffer;
