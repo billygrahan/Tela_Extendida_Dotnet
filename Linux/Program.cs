@@ -16,7 +16,25 @@ class Program
             ?? (Directory.Exists(packagedRoot) ? packagedRoot : FindFfmpegRoot());
         ffmpeg.RootPath = ffmpegRoot;
         Console.WriteLine($"[FFmpeg] Procurando bibliotecas em: {ffmpegRoot}");
+        ValidateFfmpegFiles(ffmpegRoot);
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    private static void ValidateFfmpegFiles(string root)
+    {
+        string[] requiredFiles = { "libavcodec.so.60", "libavutil.so.58", "libswscale.so.7" };
+        string[] missingFiles = requiredFiles
+            .Where(file => !File.Exists(Path.Combine(root, file)))
+            .ToArray();
+
+        if (missingFiles.Length > 0)
+        {
+            throw new FileNotFoundException(
+                $"As bibliotecas do FFmpeg 6.1 não foram encontradas em '{root}'. " +
+                $"Ausentes: {string.Join(", ", missingFiles)}. " +
+                "Não use bibliotecas libavcodec.so.61/62 com FFmpeg.AutoGen 6.1.0.1.",
+                root);
+        }
     }
 
     private static string FindFfmpegRoot()
