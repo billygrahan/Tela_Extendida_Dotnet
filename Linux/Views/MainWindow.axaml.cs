@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
@@ -29,7 +30,6 @@ public partial class MainWindow : Window
     {
         Console.WriteLine("[Cliente] Aguardando broadcast UDP do servidor Windows...");
 
-        // Usamos _ = para indicar intenção de disparar a Task sem travar a UI
         _ = Task.Run(async () =>
         {
             try
@@ -56,14 +56,27 @@ public partial class MainWindow : Window
         });
     }
 
+    // Tratamento de atalhos de teclado para controle de tela cheia
+    private void OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F11 || (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Alt)))
+        {
+            WindowState = WindowState == WindowState.FullScreen
+                ? WindowState.Normal
+                : WindowState.FullScreen;
+        }
+        else if (e.Key == Key.Escape && WindowState == WindowState.FullScreen)
+        {
+            WindowState = WindowState.Normal;
+        }
+    }
+
     private void UpdateScreenBuffer(int x, int y, int width, int height, byte[] pixelData)
     {
         if (width <= 0 || height <= 0 || pixelData.Length == 0) return;
 
-        // Executa a atualização da memória na thread da UI do Avalonia
         Dispatcher.UIThread.Post(() =>
         {
-            // Cria ou redimensiona o Bitmap dinamicamente de acordo com a resolução real recebida
             if (_bitmap == null || _bitmap.PixelSize.Width != width || _bitmap.PixelSize.Height != height)
             {
                 _bitmap = new WriteableBitmap(
@@ -84,14 +97,12 @@ public partial class MainWindow : Window
 
                     fixed (byte* srcPtr = pixelData)
                     {
-                        // Copia direta de bloco contínuo caso o buffer bata com o stride sem offset
                         if (stride == width * 4 && x == 0 && y == 0)
                         {
                             Buffer.MemoryCopy(srcPtr, ptr, pixelData.Length, pixelData.Length);
                         }
                         else
                         {
-                            // Copia linha por linha se houver padding ou sub-regiões (dirty rects)
                             for (int row = 0; row < height; row++)
                             {
                                 int destOffset = ((y + row) * stride) + (x * 4);
@@ -104,7 +115,6 @@ public partial class MainWindow : Window
                 }
             }
 
-            // Notifica o Avalonia para redesenhar a tela
             ScreenImage.InvalidateVisual();
         }, DispatcherPriority.Render);
     }

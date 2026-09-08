@@ -2,16 +2,22 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Linux.Views.MainWindow"
         Title="ScreenExtender Client"
-        WindowState="FullScreen"
-        SystemDecorations="None"
-        CanResize="False"
+        Width="1280" Height="720"
+        MinWidth="640" MinHeight="360"
+        WindowState="Normal"
+        WindowStartupLocation="CenterScreen"
+        CanResize="True"
+        SystemDecorations="Full"
         Background="Black"
-        Cursor="None">
+        Cursor="None"
+        KeyDown="OnKeyDown">
+        <!-- 'Cursor="None"' foi removido daqui -->
 
-    <Grid>
-        <!-- Controle de Imagem responsivo para cobrir a tela inteira -->
+    <Grid Background="Black">
         <Image x:Name="ScreenImage" 
-               Stretch="Fill" 
+               Stretch="Uniform" 
+               HorizontalAlignment="Center"
+               VerticalAlignment="Center"
                RenderOptions.BitmapInterpolationMode="LowQuality" />
     </Grid>
 </Window>
