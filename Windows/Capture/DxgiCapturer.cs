@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using FFmpeg.AutoGen;
+using Shared;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 
@@ -50,17 +51,17 @@ public class DxgiCapturer
 
         _codecContext->width = width;
         _codecContext->height = height;
-        _codecContext->time_base = new AVRational { num = 1, den = 60 };
-        _codecContext->framerate = new AVRational { num = 60, den = 1 };
+        _codecContext->time_base = new AVRational { num = 1, den = StreamSettings.TargetFps };
+        _codecContext->framerate = new AVRational { num = StreamSettings.TargetFps, den = 1 };
         _codecContext->pix_fmt = AVPixelFormat.AV_PIX_FMT_NV12;
-        _codecContext->bit_rate = 12_000_000;
-        _codecContext->gop_size = 30;
-        _codecContext->max_b_frames = 0;
+        _codecContext->bit_rate = StreamSettings.BitRate;
+        _codecContext->gop_size = StreamSettings.KeyFrameInterval;
+        _codecContext->max_b_frames = StreamSettings.MaxBFrames;
 
         AVDictionary* options = null;
-        ffmpeg.av_dict_set(&options, "preset", "ultrafast", 0);
-        ffmpeg.av_dict_set(&options, "tune", "zerolatency", 0);
-        ffmpeg.av_dict_set(&options, "profile", "baseline", 0);
+        ffmpeg.av_dict_set(&options, "preset", StreamSettings.EncoderPreset, 0);
+        ffmpeg.av_dict_set(&options, "tune", StreamSettings.EncoderTune, 0);
+        ffmpeg.av_dict_set(&options, "profile", StreamSettings.EncoderProfile, 0);
 
         int openResult = ffmpeg.avcodec_open2(_codecContext, codec, &options);
         if (openResult < 0)
@@ -100,7 +101,7 @@ public class DxgiCapturer
         using var adapter = dxgiDevice.GetAdapter();
 
         IDXGIOutput? targetOutput = null;
-        var outputResult = adapter.EnumOutputs(0, out var firstOutput);
+        var outputResult = adapter.EnumOutputs(StreamSettings.TargetOutputIndex, out var firstOutput);
         if (outputResult.Success)
         {
             targetOutput = firstOutput;
@@ -116,7 +117,7 @@ public class DxgiCapturer
 
         bool encoderInitialized = false;
 
-        var packetChannel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(2)
+        var packetChannel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(StreamSettings.PacketChannelCapacity)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
@@ -143,7 +144,7 @@ public class DxgiCapturer
 
         while (true)
         {
-            var result = outputDuplication.AcquireNextFrame(16, out _, out var desktopResource);
+            var result = outputDuplication.AcquireNextFrame(StreamSettings.AcquireNextFrameTimeoutMs, out _, out var desktopResource);
 
             if (result.Success)
             {

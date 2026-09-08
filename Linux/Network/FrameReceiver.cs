@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using FFmpeg.AutoGen;
+using Shared;
 
 namespace Linux.Network;
 
@@ -30,7 +31,7 @@ public class FrameReceiver
             throw new InvalidOperationException("Não foi possível alocar o contexto do decoder H.264.");
         }
 
-        _decoderContext->thread_count = 2;
+        _decoderContext->thread_count = StreamSettings.DecoderThreadCount;
         int openResult = ffmpeg.avcodec_open2(_decoderContext, codec, null);
         if (openResult < 0)
         {
@@ -58,8 +59,8 @@ public class FrameReceiver
             Console.WriteLine("[FrameReceiver] Conexão TCP estabelecida com sucesso!");
 
             client.NoDelay = true;
-            client.SendBufferSize = 1024 * 1024;
-            client.ReceiveBufferSize = 1024 * 1024;
+            client.SendBufferSize = StreamSettings.SocketBufferSize;
+            client.ReceiveBufferSize = StreamSettings.SocketBufferSize;
 
             using var stream = client.GetStream();
             byte[] lengthBuffer = new byte[4];

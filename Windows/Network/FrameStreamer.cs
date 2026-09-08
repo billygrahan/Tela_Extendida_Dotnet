@@ -2,7 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using Shared; // Onde fica a constante de porta, ex: Constants.StreamPort
+using Shared;
 using Windows.Capture;
 
 namespace Windows.Network;
@@ -21,9 +21,9 @@ public class FrameStreamer
             try
             {
                 // Escuta em todas as interfaces de rede na porta definida
-                _listener = new TcpListener(IPAddress.Any, Constants.StreamPort);
+                _listener = new TcpListener(IPAddress.Any, StreamSettings.StreamPort);
                 _listener.Start();
-                Console.WriteLine($"[FrameStreamer] Aguardando conexões TCP na porta {Constants.StreamPort}...");
+                Console.WriteLine($"[FrameStreamer] Aguardando conexões TCP na porta {StreamSettings.StreamPort}...");
 
                 while (_isRunning)
                 {

@@ -2,7 +2,7 @@
 
 public static class Constants
 {
-    public const int DiscoveryPort = 45678;
-    public const int StreamPort = 45679;
-    public const string DiscoveryMagicHeader = "SCRN_EXT_DISC_V1";
+    public const int DiscoveryPort = StreamSettings.DiscoveryPort;
+    public const int StreamPort = StreamSettings.StreamPort;
+    public const string DiscoveryMagicHeader = StreamSettings.DiscoveryMagicHeader;
 }

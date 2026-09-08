@@ -13,7 +13,7 @@ class Program
     {
         string packagedRoot = Path.Combine(AppContext.BaseDirectory, "runtimes", "linux-x64", "native");
         string ffmpegRoot = Environment.GetEnvironmentVariable("FFMPEG_ROOT")
-            ?? (Directory.Exists(packagedRoot) ? packagedRoot : FindFfmpegRoot());
+            ?? (HasFfmpegFiles(packagedRoot) ? packagedRoot : FindFfmpegRoot());
         ffmpeg.RootPath = ffmpegRoot;
         Console.WriteLine($"[FFmpeg] Procurando bibliotecas em: {ffmpegRoot}");
         ValidateFfmpegFiles(ffmpegRoot);
@@ -60,6 +60,12 @@ class Program
         }
 
         return AppContext.BaseDirectory;
+    }
+
+    private static bool HasFfmpegFiles(string root)
+    {
+        string[] requiredFiles = { "libavcodec.so.60", "libavutil.so.58", "libswscale.so.7" };
+        return requiredFiles.All(file => File.Exists(Path.Combine(root, file)));
     }
 
     public static AppBuilder BuildAvaloniaApp()
