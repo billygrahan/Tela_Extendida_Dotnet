@@ -47,17 +47,20 @@ class Program
     private static void ValidateFfmpegFiles(string root)
     {
         string[] codecFiles = Directory.Exists(root)
-            ? Directory.GetFiles(root, "avcodec-*.dll")
+            ? Directory.GetFiles(root, "avcodec*.dll")
             : Array.Empty<string>();
 
         if (codecFiles.Length == 0)
         {
             throw new FileNotFoundException(
-                $"Nenhuma DLL avcodec-*.dll foi encontrada em '{root}'. " +
-                "Instale uma build shared do FFmpeg compatível com FFmpeg.AutoGen 6.1 (avcodec-60.dll).",
+                $"Nenhuma DLL avcodec*.dll foi encontrada em '{root}'. " +
+                "A instalação precisa ser uma build shared do FFmpeg com as DLLs nativas.",
                 root);
         }
 
-        Console.WriteLine($"[FFmpeg] DLL encontrada: {Path.GetFileName(codecFiles[0])}");
+        foreach (string codecFile in codecFiles)
+        {
+            Console.WriteLine($"[FFmpeg] DLL encontrada: {Path.GetFileName(codecFile)}");
+        }
     }
 }
