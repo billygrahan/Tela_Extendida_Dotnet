@@ -1,8 +1,5 @@
 ﻿using System;
-using System.Net;
-using System.Net.Sockets;
 using System.Threading;
-using Windows.Capture;
 using Windows.Network;
 
 namespace Windows;
@@ -11,14 +8,13 @@ class Program
 {
     static void Main(string[] args)
     {
-
         Console.WriteLine("=== ScreenExtender Server (Windows) ===");
 
         // 1. Inicia o transmissor UDP de anúncios de rede
         var broadcaster = new DiscoveryBroadcaster();
         broadcaster.Start();
 
-        // 2. Inicia o servidor TCP de streaming de telas
+        // 2. Inicia o servidor TCP que aceita clientes e faz o streaming DXGI
         var streamer = new FrameStreamer();
         streamer.Start();
 
@@ -32,6 +28,7 @@ class Program
             Console.WriteLine("\nEncerrando o servidor...");
             eventArgs.Cancel = true;
             broadcaster.Stop();
+            streamer.Stop(); // Opcional: adicionar método Stop no FrameStreamer
             exitEvent.Set();
         };
 

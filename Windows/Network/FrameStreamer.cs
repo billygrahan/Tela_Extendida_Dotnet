@@ -1,9 +1,8 @@
 ﻿using System;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
-using Shared;
+using Shared; // Onde fica a constante de porta, ex: Constants.StreamPort
 using Windows.Capture;
 
 namespace Windows.Network;
@@ -11,37 +10,56 @@ namespace Windows.Network;
 public class FrameStreamer
 {
     private TcpListener? _listener;
+    private bool _isRunning;
 
-    public async Task Start()
+    public void Start()
     {
-        _listener = new TcpListener(IPAddress.Any, Constants.StreamPort);
-        _listener.Start();
+        _isRunning = true;
 
-        Console.WriteLine($"[FrameStreamer] Escutando na porta TCP {Constants.StreamPort}...");
-
-        while (true)
+        Task.Run(async () =>
         {
             try
             {
-                var client = await _listener.AcceptTcpClientAsync();
+                // Escuta em todas as interfaces de rede na porta definida
+                _listener = new TcpListener(IPAddress.Any, Constants.StreamPort);
+                _listener.Start();
+                Console.WriteLine($"[FrameStreamer] Aguardando conexões TCP na porta {Constants.StreamPort}...");
 
-                // Desativa o algoritmo de Nagle e aumenta os buffers para zerar a latência do streaming
-                client.NoDelay = true;
-                client.SendBufferSize = 1024 * 1024;
-                client.ReceiveBufferSize = 1024 * 1024;
+                while (_isRunning)
+                {
+                    TcpClient client = await _listener.AcceptTcpClientAsync();
+                    Console.WriteLine($"[FrameStreamer] Cliente conectado: {client.Client.RemoteEndPoint}");
 
-                Console.WriteLine($"\n[FrameStreamer] CLIENTE CONECTADO de {client.Client.RemoteEndPoint}!");
-
-                using var stream = client.GetStream();
-                var capturer = new DxgiCapturer();
-
-                // Inicia a captura via DXGI e envia os frames pela stream TCP
-                await capturer.StartCaptureAndStreamAsync(stream);
+                    // Ao conectar, inicia a captura e envia pela NetworkStream do cliente
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var stream = client.GetStream();
+                            var capturer = new DxgiCapturer();
+                            await capturer.StartCaptureAndStreamAsync(stream);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[FrameStreamer Error] Conexão encerrada: {ex.Message}");
+                        }
+                        finally
+                        {
+                            client.Close();
+                        }
+                    });
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[FrameStreamer Error] Cliente desconectado ou erro: {ex.Message}");
+                Console.WriteLine($"[FrameStreamer Error] {ex.Message}");
             }
-        }
+        });
+    }
+
+    public void Stop()
+    {
+        _isRunning = false;
+        _listener?.Stop();
     }
 }

@@ -1,17 +1,69 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using FFmpeg.AutoGen;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
-using Shared;
-using ZstdSharp;
+
+// Resolvendo ambiguidade entre Vortice e FFmpeg
+using ID3D11Device = Vortice.Direct3D11.ID3D11Device;
+using ID3D11Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
 
 namespace Windows.Capture;
 
+public static class FFmpegHelper
+{
+    public static int CheckFFmpegError(this int error)
+    {
+        if (error < 0) throw new Exception($"Erro no FFmpeg: {error}");
+        return error;
+    }
+}
+
 public class DxgiCapturer
 {
+    private unsafe AVCodecContext* _codecContext;
+    private unsafe AVFrame* _nv12Frame;
+    private unsafe AVPacket* _packet;
+
+    private unsafe void InitAmfEncoder(int width, int height)
+    {
+        ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
+
+        AVCodec* codec = ffmpeg.avcodec_find_encoder_by_name("h264_amf");
+        if (codec == null)
+        {
+            codec = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
+        }
+
+        _codecContext = ffmpeg.avcodec_alloc_context3(codec);
+        _codecContext->width = width;
+        _codecContext->height = height;
+        _codecContext->time_base = new AVRational { num = 1, den = 60 };
+        _codecContext->pix_fmt = AVPixelFormat.AV_PIX_FMT_NV12;
+        _codecContext->gop_size = 30;
+        _codecContext->max_b_frames = 0;
+
+        AVDictionary* options = null;
+        ffmpeg.av_dict_set(&options, "usage", "lowlatency", 0);
+        ffmpeg.av_dict_set(&options, "profile", "baseline", 0);
+        ffmpeg.av_dict_set(&options, "rc", "cbr", 0);
+
+        ffmpeg.avcodec_open2(_codecContext, codec, &options).CheckFFmpegError();
+
+        _nv12Frame = ffmpeg.av_frame_alloc();
+        _nv12Frame->format = (int)AVPixelFormat.AV_PIX_FMT_NV12;
+        _nv12Frame->width = width;
+        _nv12Frame->height = height;
+        ffmpeg.av_frame_get_buffer(_nv12Frame, 32);
+
+        _packet = ffmpeg.av_packet_alloc();
+    }
+
+    // Removido 'unsafe' daqui para permitir 'await' sem erros
     public async Task StartCaptureAndStreamAsync(Stream networkStream)
     {
         D3D11.D3D11CreateDevice(
@@ -25,13 +77,10 @@ public class DxgiCapturer
         using var adapter = dxgiDevice.GetAdapter();
 
         IDXGIOutput? targetOutput = null;
-
         for (uint i = 0; adapter.EnumOutputs(i, out var output).Success; i++)
         {
-            if (i > 0 || targetOutput == null)
-            {
-                targetOutput = output;
-            }
+            targetOutput = output;
+            break;
         }
 
         if (targetOutput == null) return;
@@ -39,58 +88,19 @@ public class DxgiCapturer
         using var output1 = targetOutput.QueryInterface<IDXGIOutput1>();
         using var outputDuplication = output1.DuplicateOutput(device);
 
-        var frameChannel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(2)
+        bool encoderInitialized = false;
+
+        var packetChannel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(2)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
             SingleWriter = true
         });
 
-        var rawFrameChannel = Channel.CreateBounded<(byte[] data, int width, int height)>(
-            new BoundedChannelOptions(2)
-            {
-                FullMode = BoundedChannelFullMode.DropOldest,
-                SingleReader = true,
-                SingleWriter = true
-            });
-
+        // Task de envio assíncrono via rede
         _ = Task.Run(async () =>
         {
-            using var compressor = new Compressor(3);
-            var reader = rawFrameChannel.Reader;
-
-            while (await reader.WaitToReadAsync())
-            {
-                while (reader.TryRead(out var frame))
-                {
-                    var (rawBuffer, width, height) = frame;
-                    byte[] compressedPixels = compressor.Wrap(rawBuffer).ToArray();
-
-                    using var memoryStream = new MemoryStream();
-                    using var writer = new BinaryWriter(memoryStream);
-
-                    var frameHeader = new FrameHeader { RectCount = 1 };
-                    frameHeader.Serialize(writer);
-
-                    var rectHeader = new RectHeader
-                    {
-                        X = 0,
-                        Y = 0,
-                        Width = width,
-                        Height = height,
-                        CompressedDataSize = compressedPixels.Length
-                    };
-                    rectHeader.Serialize(writer);
-                    writer.Write(compressedPixels);
-
-                    frameChannel.Writer.TryWrite(memoryStream.ToArray());
-                }
-            }
-        });
-
-        _ = Task.Run(async () =>
-        {
-            var reader = frameChannel.Reader;
+            var reader = packetChannel.Reader;
             while (await reader.WaitToReadAsync())
             {
                 while (reader.TryRead(out var packet))
@@ -104,28 +114,24 @@ public class DxgiCapturer
 
         ID3D11Texture2D? stagingTexture = null;
         byte[]? rawPixelBuffer = null;
-        var stopwatch = new Stopwatch();
-        int frameCounter = 0;
-        const int TARGET_FPS = 30;
-        const int FRAME_TIME_MS = 1000 / TARGET_FPS;
 
         while (true)
         {
-            stopwatch.Restart();
-
-            var result = outputDuplication.AcquireNextFrame(0, out var frameInfo, out var desktopResource);
+            var result = outputDuplication.AcquireNextFrame(16, out _, out var desktopResource);
 
             if (result.Success)
             {
                 using (desktopResource)
                 {
                     using var texture2D = desktopResource.QueryInterface<ID3D11Texture2D>();
-
                     int width = (int)texture2D.Description.Width;
                     int height = (int)texture2D.Description.Height;
 
-                    if (stagingTexture == null)
+                    if (!encoderInitialized)
                     {
+                        unsafe { InitAmfEncoder(width, height); }
+                        encoderInitialized = true;
+
                         var textureDesc = new Texture2DDescription
                         {
                             Width = (uint)width,
@@ -144,15 +150,13 @@ public class DxgiCapturer
                         rawPixelBuffer = new byte[width * height * 4];
                     }
 
-                    device.ImmediateContext.CopyResource(stagingTexture, texture2D);
-                    ExtractPixelsFast(device, stagingTexture, rawPixelBuffer!, width, height);
+                    device.ImmediateContext.CopyResource(stagingTexture!, texture2D);
 
-                    byte[] frameCopy = new byte[rawPixelBuffer.Length];
-                    Array.Copy(rawPixelBuffer, frameCopy, rawPixelBuffer.Length);
-
-                    rawFrameChannel.Writer.TryWrite((frameCopy, width, height));
-
-                    frameCounter++;
+                    byte[]? h264Packet = EncodeFrameToH264(device, stagingTexture!, rawPixelBuffer!, width, height);
+                    if (h264Packet != null)
+                    {
+                        packetChannel.Writer.TryWrite(h264Packet);
+                    }
                 }
 
                 outputDuplication.ReleaseFrame();
@@ -160,45 +164,28 @@ public class DxgiCapturer
             else if (result.Code == Vortice.DXGI.ResultCode.WaitTimeout)
             {
                 await Task.Delay(1);
-                continue;
-            }
-
-            long processingTime = stopwatch.ElapsedMilliseconds;
-            long delay = FRAME_TIME_MS - processingTime;
-
-            if (delay > 0)
-            {
-                await Task.Delay((int)delay);
             }
         }
     }
 
-    private unsafe void ExtractPixelsFast(ID3D11Device device, ID3D11Texture2D stagingTexture, byte[] destinationBuffer, int width, int height)
+    private unsafe byte[]? EncodeFrameToH264(ID3D11Device device, ID3D11Texture2D stagingTexture, byte[] buffer, int width, int height)
     {
         var dataBox = device.ImmediateContext.Map(stagingTexture, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
 
         try
         {
-            byte* srcPtr = (byte*)dataBox.DataPointer.ToPointer();
-            int rowPitch = (int)dataBox.RowPitch;
-            int bytesPerLine = width * 4;
+            ffmpeg.av_frame_make_writable(_nv12Frame);
 
-            fixed (byte* dstPtr = destinationBuffer)
+            int response = ffmpeg.avcodec_send_frame(_codecContext, _nv12Frame);
+            if (response >= 0)
             {
-                if (rowPitch == bytesPerLine)
+                response = ffmpeg.avcodec_receive_packet(_codecContext, _packet);
+                if (response >= 0)
                 {
-                    Buffer.MemoryCopy(srcPtr, dstPtr, destinationBuffer.Length, destinationBuffer.Length);
-                }
-                else
-                {
-                    for (int row = 0; row < height; row++)
-                    {
-                        Buffer.MemoryCopy(
-                            srcPtr + (row * rowPitch),
-                            dstPtr + (row * bytesPerLine),
-                            bytesPerLine,
-                            bytesPerLine);
-                    }
+                    byte[] h264Data = new byte[_packet->size];
+                    Marshal.Copy((IntPtr)_packet->data, h264Data, 0, _packet->size);
+                    ffmpeg.av_packet_unref(_packet);
+                    return h264Data;
                 }
             }
         }
@@ -206,5 +193,7 @@ public class DxgiCapturer
         {
             device.ImmediateContext.Unmap(stagingTexture, 0);
         }
+
+        return null;
     }
 }
