@@ -100,16 +100,10 @@ public class DxgiCapturer
         using var adapter = dxgiDevice.GetAdapter();
 
         IDXGIOutput? targetOutput = null;
-        for (uint i = 0; ; i++)
+        var outputResult = adapter.EnumOutputs(0, out var firstOutput);
+        if (outputResult.Success)
         {
-            var result = adapter.EnumOutputs(i, out var output);
-            if (!result.Success)
-            {
-                break;
-            }
-
-            targetOutput = output;
-            break;
+            targetOutput = firstOutput;
         }
 
         if (targetOutput == null)
