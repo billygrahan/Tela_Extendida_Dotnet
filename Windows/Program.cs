@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Threading;
 using FFmpeg.AutoGen;
 using Windows.Network;
@@ -15,6 +16,7 @@ class Program
             ?? AppContext.BaseDirectory;
         ffmpeg.RootPath = ffmpegRoot;
         Console.WriteLine($"[FFmpeg] Procurando DLLs em: {ffmpegRoot}");
+        ValidateFfmpegFiles(ffmpegRoot);
 
         // 1. Inicia o transmissor UDP de anúncios de rede
         var broadcaster = new DiscoveryBroadcaster();
@@ -40,5 +42,22 @@ class Program
 
         exitEvent.WaitOne();
         Console.WriteLine("Servidor finalizado com sucesso.");
+    }
+
+    private static void ValidateFfmpegFiles(string root)
+    {
+        string[] codecFiles = Directory.Exists(root)
+            ? Directory.GetFiles(root, "avcodec-*.dll")
+            : Array.Empty<string>();
+
+        if (codecFiles.Length == 0)
+        {
+            throw new FileNotFoundException(
+                $"Nenhuma DLL avcodec-*.dll foi encontrada em '{root}'. " +
+                "Instale uma build shared do FFmpeg compatível com FFmpeg.AutoGen 6.1 (avcodec-60.dll).",
+                root);
+        }
+
+        Console.WriteLine($"[FFmpeg] DLL encontrada: {Path.GetFileName(codecFiles[0])}");
     }
 }
