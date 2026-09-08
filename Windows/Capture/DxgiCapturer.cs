@@ -87,7 +87,10 @@ public class DxgiCapturer
             break;
         }
 
-        if (targetOutput == null) return;
+        if (targetOutput == null)
+        {
+            throw new InvalidOperationException("Nenhum monitor DXGI foi encontrado para captura.");
+        }
 
         using var output1 = targetOutput.QueryInterface<IDXGIOutput1>();
         using var outputDuplication = output1.DuplicateOutput(device);

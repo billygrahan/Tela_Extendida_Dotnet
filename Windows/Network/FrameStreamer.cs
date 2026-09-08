@@ -41,7 +41,7 @@ public class FrameStreamer
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[FrameStreamer Error] Conexão encerrada: {ex.Message}");
+                            Console.WriteLine($"[FrameStreamer Error] Conexão encerrada: {ex}");
                         }
                         finally
                         {
@@ -52,7 +52,7 @@ public class FrameStreamer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[FrameStreamer Error] {ex.Message}");
+                Console.WriteLine($"[FrameStreamer Error] {ex}");
             }
         });
     }
