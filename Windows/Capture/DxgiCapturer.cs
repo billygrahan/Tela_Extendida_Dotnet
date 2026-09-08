@@ -31,6 +31,15 @@ public class DxgiCapturer
     private unsafe AVPacket* _packet;
     private unsafe SwsContext* _swsContext;
 
+    // Buffer e estado do cursor retornado via DXGI
+    private byte[]? _cursorShapeBuffer;
+    private int _cursorWidth;
+    private int _cursorHeight;
+    private int _cursorPitch;
+    private int _cursorX;
+    private int _cursorY;
+    private bool _cursorVisible;
+
     private unsafe void InitH264Encoder(int width, int height)
     {
         AVCodec* codec = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
@@ -87,7 +96,6 @@ public class DxgiCapturer
         }
     }
 
-    // Removido 'unsafe' daqui para permitir 'await' sem erros
     public async Task StartCaptureAndStreamAsync(Stream networkStream)
     {
         D3D11.D3D11CreateDevice(
@@ -144,7 +152,6 @@ public class DxgiCapturer
             SingleWriter = true
         });
 
-        // Task de envio assíncrono via rede
         _ = Task.Run(async () =>
         {
             var reader = packetChannel.Reader;
@@ -160,11 +167,11 @@ public class DxgiCapturer
         });
 
         ID3D11Texture2D? stagingTexture = null;
-        byte[]? rawPixelBuffer = null;
 
         while (true)
         {
-            var result = outputDuplication.AcquireNextFrame(StreamSettings.AcquireNextFrameTimeoutMs, out _, out var desktopResource);
+            // 1. Passamos 'out var frameInfo' para capturar metadados do cursor
+            var result = outputDuplication.AcquireNextFrame(StreamSettings.AcquireNextFrameTimeoutMs, out var frameInfo, out var desktopResource);
 
             if (result.Success)
             {
@@ -194,12 +201,46 @@ public class DxgiCapturer
                         };
 
                         stagingTexture = device.CreateTexture2D(textureDesc);
-                        rawPixelBuffer = new byte[width * height * 4];
+                    }
+
+
+                    if (frameInfo.PointerPosition.Visible)
+                    {
+                        _cursorVisible = true;
+                        _cursorX = frameInfo.PointerPosition.Position.X;
+                        _cursorY = frameInfo.PointerPosition.Position.Y;
+                    }
+                    //else
+                    //{
+                    //    _cursorVisible = false;
+                    //}
+
+                    if (frameInfo.PointerShapeBufferSize > 0)
+                    {
+                        _cursorShapeBuffer = new byte[frameInfo.PointerShapeBufferSize];
+                        unsafe
+                        {
+                            fixed (byte* pShape = _cursorShapeBuffer)
+                            {
+                                outputDuplication.GetFramePointerShape(
+                                    frameInfo.PointerShapeBufferSize,
+                                    (IntPtr)pShape,
+                                    out var requiredSize,
+                                    out var shapeInfo);
+
+                                // Corrigidos os casts implícitos de uint para int e o enum PointerShapeType
+                                _cursorWidth = (int)shapeInfo.Width;
+                                _cursorHeight = shapeInfo.Type == (uint)PointerShapeType.Monochrome
+                                    ? (int)(shapeInfo.Height / 2)
+                                    : (int)shapeInfo.Height;
+                                _cursorPitch = (int)shapeInfo.Pitch;
+                            }
+                        }
                     }
 
                     device.ImmediateContext.CopyResource(stagingTexture!, texture2D);
 
-                    byte[]? h264Packet = EncodeFrameToH264(device, stagingTexture!, rawPixelBuffer!, width, height);
+                    byte[]? h264Packet = EncodeFrameToH264(device, stagingTexture!, width, height);
                     if (h264Packet != null)
                     {
                         packetChannel.Writer.TryWrite(h264Packet);
@@ -215,13 +256,30 @@ public class DxgiCapturer
         }
     }
 
-    private unsafe byte[]? EncodeFrameToH264(ID3D11Device device, ID3D11Texture2D stagingTexture, byte[] buffer, int width, int height)
+    private unsafe byte[]? EncodeFrameToH264(ID3D11Device device, ID3D11Texture2D stagingTexture, int width, int height)
     {
         var dataBox = device.ImmediateContext.Map(stagingTexture, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
 
         try
         {
             ffmpeg.av_frame_make_writable(_nv12Frame);
+
+            // 3. Aplica o ponteiro do mouse na imagem BGRA caso esteja visível
+            if (_cursorVisible && _cursorShapeBuffer != null && _cursorWidth > 0 && _cursorHeight > 0)
+            {
+
+                OverlayCursor(
+                    (byte*)dataBox.DataPointer,
+                    dataBox.RowPitch,
+                    width,
+                    height,
+                    _cursorShapeBuffer,
+                    _cursorWidth,
+                    _cursorHeight,
+                    _cursorPitch,
+                    _cursorX,
+                    _cursorY);
+            }
 
             _swsContext = ffmpeg.sws_getCachedContext(
                 _swsContext,
@@ -272,4 +330,81 @@ public class DxgiCapturer
 
         return null;
     }
+
+    public unsafe void OverlayCursor(
+        byte* pFrame,
+        uint frameRowPitch,
+        int frameWidth,
+        int frameHeight,
+        byte[] cursorBuffer,
+        int cursorWidth,
+        int cursorHeight,
+        int cursorPitch,
+        int cursorX,
+        int cursorY)
+    {
+        // Desenho vetorial da seta padrão do Windows em modo Escuro (Preto com Borda Branca)
+        // Matriz 12x19 representando a silhueta clássica do ponteiro
+        // 0: Transparente, 1: Borda Branca (RGB 255,255,255), 2: Preenchimento Preto (RGB 0,0,0)
+        byte[,] windowsDarkCursorMap = new byte[19, 12]
+        {
+            { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+            { 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+            { 1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+            { 1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0 },
+            { 1, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0 },
+            { 1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0 },
+            { 1, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0 },
+            { 1, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0 },
+            { 1, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0 },
+            { 1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0 },
+            { 1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 0 },
+            { 1, 2, 2, 1, 2, 2, 1, 0, 0, 0, 0, 0 },
+            { 1, 2, 1, 0, 1, 2, 2, 1, 0, 0, 0, 0 },
+            { 1, 1, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0 },
+            { 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0 },
+            { 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0 },
+            { 0, 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0 },
+            { 0, 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0 },
+            { 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0 }
+        };
+
+        int mapHeight = windowsDarkCursorMap.GetLength(0);
+        int mapWidth = windowsDarkCursorMap.GetLength(1);
+
+        for (int y = 0; y < mapHeight; y++)
+        {
+            int targetY = cursorY + y;
+            if (targetY < 0 || targetY >= frameHeight) continue;
+
+            byte* pFrameRow = pFrame + (targetY * frameRowPitch);
+
+            for (int x = 0; x < mapWidth; x++)
+            {
+                int targetX = cursorX + x;
+                if (targetX < 0 || targetX >= frameWidth) continue;
+
+                byte pixelType = windowsDarkCursorMap[y, x];
+                if (pixelType == 0) continue; // Pixel transparente
+
+                byte* pPixel = pFrameRow + (targetX * 4);
+
+                if (pixelType == 1) // Borda Branca
+                {
+                    pPixel[0] = 255; // Blue
+                    pPixel[1] = 255; // Green
+                    pPixel[2] = 255; // Red
+                    pPixel[3] = 255; // Alpha
+                }
+                else if (pixelType == 2) // Preenchimento Preto
+                {
+                    pPixel[0] = 0;   // Blue
+                    pPixel[1] = 0;   // Green
+                    pPixel[2] = 0;   // Red
+                    pPixel[3] = 255; // Alpha
+                }
+            }
+        }
+    }
+
 }
