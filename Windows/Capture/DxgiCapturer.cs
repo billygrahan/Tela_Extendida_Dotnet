@@ -30,7 +30,7 @@ public class DxgiCapturer
     private unsafe AVPacket* _packet;
     private unsafe SwsContext* _swsContext;
 
-    private unsafe void InitAmfEncoder(int width, int height)
+    private unsafe void InitH264Encoder(int width, int height)
     {
         AVCodec* codec = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
 
@@ -39,28 +39,51 @@ public class DxgiCapturer
             throw new InvalidOperationException("Nenhum encoder H.264 disponível no FFmpeg.");
         }
 
+        string codecName = Marshal.PtrToStringAnsi((IntPtr)codec->name) ?? "desconhecido";
+        Console.WriteLine($"[FFmpeg] Encoder H.264 selecionado: {codecName}");
+
         _codecContext = ffmpeg.avcodec_alloc_context3(codec);
+        if (_codecContext == null)
+        {
+            throw new InvalidOperationException("Não foi possível alocar o contexto do encoder H.264.");
+        }
+
         _codecContext->width = width;
         _codecContext->height = height;
         _codecContext->time_base = new AVRational { num = 1, den = 60 };
+        _codecContext->framerate = new AVRational { num = 60, den = 1 };
         _codecContext->pix_fmt = AVPixelFormat.AV_PIX_FMT_NV12;
+        _codecContext->bit_rate = 12_000_000;
         _codecContext->gop_size = 30;
         _codecContext->max_b_frames = 0;
 
         AVDictionary* options = null;
-        ffmpeg.av_dict_set(&options, "usage", "lowlatency", 0);
+        ffmpeg.av_dict_set(&options, "preset", "ultrafast", 0);
+        ffmpeg.av_dict_set(&options, "tune", "zerolatency", 0);
         ffmpeg.av_dict_set(&options, "profile", "baseline", 0);
-        ffmpeg.av_dict_set(&options, "rc", "cbr", 0);
 
-        ffmpeg.avcodec_open2(_codecContext, codec, &options).CheckFFmpegError();
+        int openResult = ffmpeg.avcodec_open2(_codecContext, codec, &options);
+        if (openResult < 0)
+        {
+            throw new InvalidOperationException($"Não foi possível abrir o encoder H.264 {codecName}: {openResult}.");
+        }
 
         _nv12Frame = ffmpeg.av_frame_alloc();
+        if (_nv12Frame == null)
+        {
+            throw new InvalidOperationException("Não foi possível alocar o frame NV12.");
+        }
+
         _nv12Frame->format = (int)AVPixelFormat.AV_PIX_FMT_NV12;
         _nv12Frame->width = width;
         _nv12Frame->height = height;
-        ffmpeg.av_frame_get_buffer(_nv12Frame, 32);
+        ffmpeg.av_frame_get_buffer(_nv12Frame, 32).CheckFFmpegError();
 
         _packet = ffmpeg.av_packet_alloc();
+        if (_packet == null)
+        {
+            throw new InvalidOperationException("Não foi possível alocar o pacote H.264.");
+        }
     }
 
     // Removido 'unsafe' daqui para permitir 'await' sem erros
@@ -132,7 +155,7 @@ public class DxgiCapturer
 
                     if (!encoderInitialized)
                     {
-                        unsafe { InitAmfEncoder(width, height); }
+                        unsafe { InitH264Encoder(width, height); }
                         encoderInitialized = true;
 
                         var textureDesc = new Texture2DDescription
