@@ -32,11 +32,7 @@ public class DxgiCapturer
 
     private unsafe void InitAmfEncoder(int width, int height)
     {
-        AVCodec* codec = ffmpeg.avcodec_find_encoder_by_name("h264_amf");
-        if (codec == null)
-        {
-            codec = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
-        }
+        AVCodec* codec = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
 
         if (codec == null)
         {
