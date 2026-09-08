@@ -96,7 +96,7 @@ public class DxgiCapturer
         }
     }
 
-    public async Task StartCaptureAndStreamAsync(Stream networkStream)
+    public async Task StartCaptureAndStreamAsync(Stream networkStream, CancellationToken cancellationToken = default)
     {
         D3D11.D3D11CreateDevice(
             null,

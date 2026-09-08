@@ -1,69 +1,135 @@
 ﻿using System;
 using System.IO;
-using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using FFmpeg.AutoGen;
 using Windows.Network;
+using static System.Net.Mime.MediaTypeNames;
+using System.Drawing;
+using System.Windows.Forms;
+using WinForms = System.Windows.Forms;
 
 namespace Windows;
 
+
+
 class Program
 {
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern bool SetDllDirectory(string lpPathName);
+
+    // Importações para reanexar ou alocar o terminal e permitir o Console.WriteLine
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AttachConsole(int dwProcessId);
+
+    private const int ATTACH_PARENT_PROCESS = -1;
+
+    [STAThread]
     static void Main(string[] args)
     {
-        Console.WriteLine("=== ScreenExtender Server (Windows) ===");
+        // Garante que as mensagens de Console.WriteLine apareçam no terminal atual
+        AttachConsole(ATTACH_PARENT_PROCESS);
 
-        string ffmpegRoot = Environment.GetEnvironmentVariable("FFMPEG_ROOT")
-            ?? Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "native");
-        ffmpeg.RootPath = ffmpegRoot;
-        Console.WriteLine($"[FFmpeg] Procurando DLLs em: {ffmpegRoot}");
-        ValidateFfmpegFiles(ffmpegRoot);
+        // 1. Definição e validação dos caminhos do FFmpeg
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string ffmpegFolder = Path.Combine(baseDir, "ffmpeg");
+        string parentFfmpegFolder = Path.Combine(baseDir, "..", "ffmpeg");
 
-        // 1. Inicia o transmissor UDP de anúncios de rede
+        if (ValidateFfmpegFiles(ffmpegFolder))
+        {
+            ffmpeg.RootPath = ffmpegFolder;
+            SetDllDirectory(ffmpegFolder);
+            DynamicallyLoadedBindings.Initialize();
+            Console.WriteLine($"\n[FFmpeg] DLLs carregadas do diretório local: {ffmpegFolder}");
+        }
+        else if (ValidateFfmpegFiles(parentFfmpegFolder))
+        {
+            string resolvedPath = Path.GetFullPath(parentFfmpegFolder);
+            ffmpeg.RootPath = resolvedPath;
+            SetDllDirectory(resolvedPath);
+            DynamicallyLoadedBindings.Initialize();
+            Console.WriteLine($"\n[FFmpeg] DLLs carregadas do diretório pai: {resolvedPath}");
+        }
+        else
+        {
+            Console.WriteLine("\n[Erro] DLLs do FFmpeg 6.1 ausentes.");
+            return;
+        }
+
+        // 2. Inicialização dos componentes visuais
+        WinForms.Application.EnableVisualStyles();
+        WinForms.Application.SetCompatibleTextRenderingDefault(false);
+
+        // 3. Inicialização dos serviços de rede
         var broadcaster = new DiscoveryBroadcaster();
         broadcaster.Start();
 
-        // 2. Inicia o servidor TCP que aceita clientes e faz o streaming DXGI
         var streamer = new FrameStreamer();
         streamer.Start();
 
-        Console.WriteLine("\n[Servidor Ativo e Aguardando Conexões]");
-        Console.WriteLine("Pressione CTRL+C no terminal do Windows para encerrar.\n");
-
-        // 3. Bloqueia a thread principal para manter o servidor aberto
-        var exitEvent = new ManualResetEvent(false);
-        Console.CancelKeyPress += (sender, eventArgs) =>
+        // 4. Configuração do ícone da bandeja (System Tray)
+        var trayIcon = new WinForms.NotifyIcon
         {
-            Console.WriteLine("\nEncerrando o servidor...");
-            eventArgs.Cancel = true;
-            broadcaster.Stop();
-            streamer.Stop(); // Opcional: adicionar método Stop no FrameStreamer
-            exitEvent.Set();
+            Icon = SystemIcons.Application,
+            Text = "ScreenExtender Server (Ativo)",
+            Visible = true
         };
 
-        exitEvent.WaitOne();
-        Console.WriteLine("Servidor finalizado com sucesso.");
+        var contextMenu = new WinForms.ContextMenuStrip();
+        contextMenu.Items.Add("Encerrar Servidor", null, (s, e) =>
+        {
+            trayIcon.Visible = false;
+
+            try
+            {
+                broadcaster.Stop();
+                streamer.Stop();
+            }
+            catch { }
+
+            WinForms.Application.Exit();
+            Environment.Exit(0);
+        });
+
+        trayIcon.ContextMenuStrip = contextMenu;
+
+        // 5. Execução do loop de mensagens
+        WinForms.Application.Run();
     }
 
-    private static void ValidateFfmpegFiles(string root)
+    private static bool ValidateFfmpegFiles(string folderPath)
     {
-        string[] requiredFiles = { "avcodec-60.dll", "avutil-58.dll", "swscale-7.dll" };
-        string[] missingFiles = requiredFiles
-            .Where(file => !File.Exists(Path.Combine(root, file)))
-            .ToArray();
+        if (!Directory.Exists(folderPath)) return false;
 
-        if (missingFiles.Length > 0)
+        string[] requiredFiles = new[] { "avcodec-60.dll", "avutil-58.dll", "swscale-7.dll" };
+        foreach (var file in requiredFiles)
         {
-            throw new FileNotFoundException(
-                $"As DLLs do FFmpeg 6.1 não foram encontradas em '{root}'. " +
-                $"Ausentes: {string.Join(", ", missingFiles)}. " +
-                "Não use DLLs avcodec-61/62 com FFmpeg.AutoGen 6.1.0.1.",
-                root);
+            if (!File.Exists(Path.Combine(folderPath, file))) return false;
         }
 
-        foreach (string file in requiredFiles)
-        {
-            Console.WriteLine($"[FFmpeg] DLL encontrada: {file}");
-        }
+        return true;
     }
 }
+
+    // versão pegando do sistema, mas não é confiável, pois pode pegar DLLs de outra versão do FFmpeg
+    //private static void ValidateFfmpegFiles(string root)
+    //{
+    //    string[] requiredFiles = { "avcodec-60.dll", "avutil-58.dll", "swscale-7.dll" };
+    //    string[] missingFiles = requiredFiles
+    //        .Where(file => !File.Exists(Path.Combine(root, file)))
+    //        .ToArray();
+
+    //    if (missingFiles.Length > 0)
+    //    {
+    //        throw new FileNotFoundException(
+    //            $"As DLLs do FFmpeg 6.1 não foram encontradas em '{root}'. " +
+    //            $"Ausentes: {string.Join(", ", missingFiles)}. " +
+    //            "Não use DLLs avcodec-61/62 com FFmpeg.AutoGen 6.1.0.1.",
+    //            root);
+    //    }
+
+    //    foreach (string file in requiredFiles)
+    //    {
+    //        Console.WriteLine($"[FFmpeg] DLL encontrada: {file}");
+    //    }
+    //}
