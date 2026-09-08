@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using FFmpeg.AutoGen;
 using Windows.Network;
 
 namespace Windows;
@@ -9,6 +10,11 @@ class Program
     static void Main(string[] args)
     {
         Console.WriteLine("=== ScreenExtender Server (Windows) ===");
+
+        string ffmpegRoot = Environment.GetEnvironmentVariable("FFMPEG_ROOT")
+            ?? AppContext.BaseDirectory;
+        ffmpeg.RootPath = ffmpegRoot;
+        Console.WriteLine($"[FFmpeg] Procurando DLLs em: {ffmpegRoot}");
 
         // 1. Inicia o transmissor UDP de anúncios de rede
         var broadcaster = new DiscoveryBroadcaster();
