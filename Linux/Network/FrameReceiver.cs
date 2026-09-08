@@ -17,15 +17,32 @@ public class FrameReceiver
 
     private unsafe void InitDecoder()
     {
-        ffmpeg.av_log_set_level(ffmpeg.AV_LOG_QUIET);
         AVCodec* codec = ffmpeg.avcodec_find_decoder(AVCodecID.AV_CODEC_ID_H264);
 
+        if (codec == null)
+        {
+            throw new InvalidOperationException("Nenhum decoder H.264 disponível no FFmpeg.");
+        }
+
         _decoderContext = ffmpeg.avcodec_alloc_context3(codec);
+        if (_decoderContext == null)
+        {
+            throw new InvalidOperationException("Não foi possível alocar o contexto do decoder H.264.");
+        }
+
         _decoderContext->thread_count = 2;
-        ffmpeg.avcodec_open2(_decoderContext, codec, null);
+        int openResult = ffmpeg.avcodec_open2(_decoderContext, codec, null);
+        if (openResult < 0)
+        {
+            throw new InvalidOperationException($"Não foi possível abrir o decoder H.264: {openResult}.");
+        }
 
         _frame = ffmpeg.av_frame_alloc();
         _packet = ffmpeg.av_packet_alloc();
+        if (_frame == null || _packet == null)
+        {
+            throw new InvalidOperationException("Não foi possível alocar estruturas do decoder H.264.");
+        }
     }
 
     public async Task ConnectAndReceiveAsync(System.Net.IPAddress serverIp)
@@ -70,7 +87,7 @@ public class FrameReceiver
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FrameReceiver] ERRO crítico no fluxo de vídeo: {ex.Message}");
+            Console.WriteLine($"[FrameReceiver] ERRO crítico no fluxo de vídeo: {ex}");
         }
     }
 
@@ -78,6 +95,7 @@ public class FrameReceiver
     {
         fixed (byte* pData = h264Bytes)
         {
+            ffmpeg.av_packet_unref(_packet);
             _packet->data = pData;
             _packet->size = packetSize;
 

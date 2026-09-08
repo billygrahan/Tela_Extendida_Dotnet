@@ -13,7 +13,7 @@ class Program
         Console.WriteLine("=== ScreenExtender Server (Windows) ===");
 
         string ffmpegRoot = Environment.GetEnvironmentVariable("FFMPEG_ROOT")
-            ?? AppContext.BaseDirectory;
+            ?? Path.Combine(AppContext.BaseDirectory, "runtimes", "win-x64", "native");
         ffmpeg.RootPath = ffmpegRoot;
         Console.WriteLine($"[FFmpeg] Procurando DLLs em: {ffmpegRoot}");
         ValidateFfmpegFiles(ffmpegRoot);
