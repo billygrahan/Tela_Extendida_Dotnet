@@ -28,6 +28,7 @@ public class DxgiCapturer
     private unsafe AVCodecContext* _codecContext;
     private unsafe AVFrame* _nv12Frame;
     private unsafe AVPacket* _packet;
+    private unsafe SwsContext* _swsContext;
 
     private unsafe void InitAmfEncoder(int width, int height)
     {
@@ -37,6 +38,11 @@ public class DxgiCapturer
         if (codec == null)
         {
             codec = ffmpeg.avcodec_find_encoder(AVCodecID.AV_CODEC_ID_H264);
+        }
+
+        if (codec == null)
+        {
+            throw new InvalidOperationException("Nenhum encoder H.264 disponível no FFmpeg.");
         }
 
         _codecContext = ffmpeg.avcodec_alloc_context3(codec);
@@ -175,6 +181,35 @@ public class DxgiCapturer
         try
         {
             ffmpeg.av_frame_make_writable(_nv12Frame);
+
+            _swsContext = ffmpeg.sws_getCachedContext(
+                _swsContext,
+                width,
+                height,
+                AVPixelFormat.AV_PIX_FMT_BGRA,
+                width,
+                height,
+                AVPixelFormat.AV_PIX_FMT_NV12,
+                0,
+                null,
+                null,
+                null);
+
+            if (_swsContext == null)
+            {
+                throw new InvalidOperationException("Não foi possível criar o conversor BGRA para NV12.");
+            }
+
+            byte*[] sourceData = { (byte*)dataBox.DataPointer, null, null, null };
+            int[] sourceLinesize = { checked((int)dataBox.RowPitch), 0, 0, 0 };
+            ffmpeg.sws_scale(
+                _swsContext,
+                sourceData,
+                sourceLinesize,
+                0,
+                height,
+                _nv12Frame->data,
+                _nv12Frame->linesize);
 
             int response = ffmpeg.avcodec_send_frame(_codecContext, _nv12Frame);
             if (response >= 0)
