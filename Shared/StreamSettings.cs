@@ -19,8 +19,8 @@ public static class StreamSettings
     public const string EncoderProfile = "baseline";
 
     // Desempenho e transporte
-    public const int AcquireNextFrameTimeoutMs = 16;
-    public const int PacketChannelCapacity = 2;
+    public const int AcquireNextFrameTimeoutMs = 8;
+    public const int PacketChannelCapacity = 1;
     public const int SocketBufferSize = 1024 * 1024;
-    public const int DecoderThreadCount = 2;
+    public const int DecoderThreadCount = 4;
 }

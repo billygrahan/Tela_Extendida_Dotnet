@@ -1,65 +1,96 @@
 ﻿using System;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
-using Shared;
 using Windows.Capture;
 
 namespace Windows.Network;
 
 public class FrameStreamer
 {
+    private readonly int _port;
     private TcpListener? _listener;
-    private bool _isRunning;
+    private CancellationTokenSource? _cts;
+    private Task? _listenTask;
+
+    public FrameStreamer(int port = 45679)
+    {
+        _port = port;
+    }
 
     public void Start()
     {
-        _isRunning = true;
+        _cts = new CancellationTokenSource();
+        _listener = new TcpListener(IPAddress.Any, _port);
+        _listener.Start();
 
-        Task.Run(async () =>
+        Console.WriteLine($"[FrameStreamer] Aguardando conexões TCP na porta {_port}...");
+
+        // Inicia a escuta contínua em segundo plano
+        _listenTask = Task.Run(() => AcceptClientsLoopAsync(_cts.Token));
+    }
+
+    private async Task AcceptClientsLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
         {
+            TcpClient? client = null;
+
             try
             {
-                // Escuta em todas as interfaces de rede na porta definida
-                _listener = new TcpListener(IPAddress.Any, StreamSettings.StreamPort);
-                _listener.Start();
-                Console.WriteLine($"[FrameStreamer] Aguardando conexões TCP na porta {StreamSettings.StreamPort}...");
+                // Aguarda o próximo cliente TCP se conectar
+                client = await _listener!.AcceptTcpClientAsync(cancellationToken);
+                var clientEndPoint = client.Client.RemoteEndPoint?.ToString();
 
-                while (_isRunning)
+                Console.WriteLine($"[FrameStreamer] Cliente conectado: {clientEndPoint}");
+
+                using (var networkStream = client.GetStream())
                 {
-                    TcpClient client = await _listener.AcceptTcpClientAsync();
-                    Console.WriteLine($"[FrameStreamer] Cliente conectado: {client.Client.RemoteEndPoint}");
-
-                    // Ao conectar, inicia a captura e envia pela NetworkStream do cliente
-                    _ = Task.Run(async () =>
+                    // 1. O 'using' aqui garante o Dispose() do DXGI no encerramento da conexão!
+                    using (var capturer = new DxgiCapturer())
                     {
-                        try
-                        {
-                            using var stream = client.GetStream();
-                            var capturer = new DxgiCapturer();
-                            await capturer.StartCaptureAndStreamAsync(stream);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"[FrameStreamer Error] Conexão encerrada: {ex}");
-                        }
-                        finally
-                        {
-                            client.Close();
-                        }
-                    });
+                        // Transmite os frames enquanto a conexão estiver ativa
+                        await capturer.StartCaptureAndStreamAsync(networkStream, cancellationToken);
+                    }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelamento normal solicitado pelo Stop()
+                break;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[FrameStreamer Error] {ex}");
+                // Captura qualquer erro de rede ou desconexão abrupta do cliente
+                Console.WriteLine($"[FrameStreamer] Cliente desconectado/erro: {ex.Message}");
             }
-        });
+            finally
+            {
+                // 2. Garante o fechamento limpo do socket do cliente
+                if (client != null)
+                {
+                    client.Close();
+                    client.Dispose();
+                }
+
+                // 3. Limpa a memória nativa da GPU e prepara o ambiente para o próximo cliente
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+
+                Console.WriteLine("[FrameStreamer] Sessão finalizada. Aguardando novo cliente...");
+            }
+
+            // Delay preventivo para evitar sobrecarga antes da próxima escuta
+            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public void Stop()
     {
-        _isRunning = false;
+        _cts?.Cancel();
         _listener?.Stop();
+        Console.WriteLine("[FrameStreamer] Servidor TCP interrompido.");
     }
 }
