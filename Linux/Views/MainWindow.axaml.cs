@@ -21,8 +21,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        
-        // Inicializa a escuta de rede assim que a janela for carregada
         Opened += OnWindowOpened;
     }
 
@@ -42,6 +40,8 @@ public partial class MainWindow : Window
                     Console.WriteLine($"[Cliente] Servidor Windows encontrado no IP: {serverIp}");
                     
                     _receiver.OnFrameUnpacked += UpdateScreenBuffer;
+                    _receiver.OnCursorMoved += UpdateCursorPosition; // Inscreve no evento correto
+
                     await _receiver.ConnectAndReceiveAsync(serverIp);
                 }
                 else
@@ -56,7 +56,6 @@ public partial class MainWindow : Window
         });
     }
 
-    // Tratamento de atalhos de teclado para controle de tela cheia
     private void OnKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key == Key.F11 || (e.Key == Key.Enter && e.KeyModifiers.HasFlag(KeyModifiers.Alt)))
@@ -69,6 +68,38 @@ public partial class MainWindow : Window
         {
             WindowState = WindowState.Normal;
         }
+    }
+
+    // Recebe o objeto CursorState do FrameReceiver
+    private void UpdateCursorPosition(FrameReceiver.CursorState cursor)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            CursorPointer.IsVisible = cursor.Visible;
+
+            if (!cursor.Visible || _bitmap == null) return;
+
+            // Resolução original do vídeo recebido (ex: 1920x1080)
+            double nativeWidth = _bitmap.PixelSize.Width;
+            double nativeHeight = _bitmap.PixelSize.Height;
+
+            // Resolução atual da imagem renderizada na janela no Linux
+            double renderWidth = ScreenImage.Bounds.Width;
+            double renderHeight = ScreenImage.Bounds.Height;
+
+            if (nativeWidth <= 0 || nativeHeight <= 0 || renderWidth <= 0 || renderHeight <= 0) return;
+
+            // Calcula os fatores de escala
+            double scaleX = renderWidth / nativeWidth;
+            double scaleY = renderHeight / nativeHeight;
+
+            // Aplica a proporção nas coordenadas X e Y
+            double scaledX = cursor.X * scaleX;
+            double scaledY = cursor.Y * scaleY;
+
+            Canvas.SetLeft(CursorPointer, scaledX);
+            Canvas.SetTop(CursorPointer, scaledY);
+        }, DispatcherPriority.Render);
     }
 
     private void UpdateScreenBuffer(int x, int y, int width, int height, byte[] pixelData)

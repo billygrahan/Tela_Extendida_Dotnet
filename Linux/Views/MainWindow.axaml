@@ -1,23 +1,20 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Linux.Views.MainWindow"
-        Title="WinToLin Client"
-        Width="1280" Height="720"
-        MinWidth="640" MinHeight="360"
-        WindowState="Normal"
-        WindowStartupLocation="CenterScreen"
-        CanResize="True"
-        SystemDecorations="Full"
-        Background="Black"
-        Cursor="None"
+        Title="Tela Estendida Linux"
         KeyDown="OnKeyDown">
-        <!-- 'Cursor="None"' foi removido daqui -->
+    <Grid Name="ContainerGrid">
+        <!-- Stretch="Fill" faz a tela se redimensionar com a janela -->
+        <Image Name="ScreenImage" Stretch="Fill" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
 
-    <Grid Background="Black">
-        <Image x:Name="ScreenImage" 
-               Stretch="Uniform" 
-               HorizontalAlignment="Center"
-               VerticalAlignment="Center"
-               RenderOptions.BitmapInterpolationMode="LowQuality" />
+        <!-- Overlay do cursor cobrindo a mesma área -->
+        <Canvas Name="CursorCanvas" IsHitTestVisible="False" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+            <Path Name="CursorPointer"
+                  Data="M 0,0 L 0,17 L 4,13 L 7,19 L 10,18 L 7,12 L 12,12 Z"
+                  Fill="White"
+                  Stroke="Black"
+                  StrokeThickness="1.5"
+                  IsVisible="False" />
+        </Canvas>
     </Grid>
 </Window>

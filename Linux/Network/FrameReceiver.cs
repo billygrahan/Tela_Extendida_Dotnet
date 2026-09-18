@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Net.Sockets;
+using System.Text.Json;
 using System.Threading.Tasks;
 using FFmpeg.AutoGen;
 using Shared;
@@ -14,7 +15,19 @@ public class FrameReceiver
     private unsafe AVPacket* _packet;
     private unsafe SwsContext* _swsContext;
 
+    // Adicionamos as propriedades do cursor no formato do JSON enviado
+    public class CursorState
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public bool Visible { get; set; }
+        public int Type { get; set; }
+    }
+
     public event Action<int, int, int, int, byte[]>? OnFrameUnpacked;
+    
+    // Novo evento para avisar a UI do Linux que o mouse moveu
+    public event Action<CursorState>? OnCursorMoved; 
 
     private unsafe void InitDecoder()
     {
@@ -63,32 +76,75 @@ public class FrameReceiver
             client.ReceiveBufferSize = StreamSettings.SocketBufferSize;
 
             using var stream = client.GetStream();
+            
+            // Buffers para o novo protocolo: 1 byte Tipo, 4 bytes Tamanho
+            byte[] typeBuffer = new byte[1];
             byte[] lengthBuffer = new byte[4];
 
             while (client.Connected)
             {
+                // 1. Lê o TIPO do pacote (1 byte)
+                if (!await ReadExactAsync(stream, typeBuffer, 0, 1))
+                {
+                    Console.WriteLine("[FrameReceiver] Desconectado: falha ao ler tipo de pacote.");
+                    break;
+                }
+                byte packetType = typeBuffer[0];
+
+                // 2. Lê o TAMANHO do pacote (4 bytes)
                 if (!await ReadExactAsync(stream, lengthBuffer, 0, 4))
                 {
                     Console.WriteLine("[FrameReceiver] Desconectado: falha ao ler tamanho do pacote.");
                     break;
                 }
-
                 int packetSize = BitConverter.ToInt32(lengthBuffer, 0);
                 if (packetSize <= 0) continue;
 
-                byte[] h264Bytes = new byte[packetSize];
-                if (!await ReadExactAsync(stream, h264Bytes, 0, packetSize))
+                // 3. Lê o PAYLOAD completo
+                byte[] payloadBytes = new byte[packetSize];
+                if (!await ReadExactAsync(stream, payloadBytes, 0, packetSize))
                 {
-                    Console.WriteLine("[FrameReceiver] Desconectado: falha ao ler payload de vídeo.");
+                    Console.WriteLine("[FrameReceiver] Desconectado: falha ao ler payload.");
                     break;
                 }
 
-                ProcessH264Packet(h264Bytes, packetSize);
+                // 4. Roteamento baseado no TIPO
+                if (packetType == 0) // PacketType.Video
+                {
+                    ProcessH264Packet(payloadBytes, packetSize);
+                }
+                else if (packetType == 1) // PacketType.Cursor
+                {
+                    ProcessCursorPacket(payloadBytes);
+                }
+                else
+                {
+                    Console.WriteLine($"[FrameReceiver] Tipo de pacote desconhecido ignorado: {packetType}");
+                }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[FrameReceiver] ERRO crítico no fluxo de vídeo: {ex}");
+            Console.WriteLine($"[FrameReceiver] ERRO crítico no fluxo de rede: {ex}");
+        }
+    }
+
+    // Novo método para processar os dados JSON do cursor
+    private void ProcessCursorPacket(byte[] payloadBytes)
+    {
+        try
+        {
+            string json = System.Text.Encoding.UTF8.GetString(payloadBytes);
+            var cursorState = JsonSerializer.Deserialize<CursorState>(json);
+            
+            if (cursorState != null)
+            {
+                OnCursorMoved?.Invoke(cursorState);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FrameReceiver] Falha ao ler pacote de cursor: {ex.Message}");
         }
     }
 
