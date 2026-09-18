@@ -1,12 +1,12 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Shared;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
-
 using ID3D11Device = Vortice.Direct3D11.ID3D11Device;
 using ID3D11Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
 
@@ -21,8 +21,37 @@ public static class FFmpegHelper
     }
 }
 
+public enum PacketType : byte
+{
+    Video = 0,
+    Cursor = 1
+}
+
+public class NetworkPacket
+{
+    public PacketType Type { get; set; }
+    public byte[] Data { get; set; } = Array.Empty<byte>();
+}
+
 public class DxgiCapturer : IDisposable
 {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int x; public int y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CURSORINFO
+    {
+        public int cbSize;
+        public int flags;
+        public IntPtr hCursor;
+        public POINT ptScreenPos;
+    }
+
+    private const int CURSOR_SHOWING = 0x00000001;
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorInfo(out CURSORINFO pci);
+
     private ID3D11Device? _device;
     private IDXGIOutputDuplication? _duplication;
     private ID3D11Texture2D? _stagingTexture;
@@ -33,9 +62,11 @@ public class DxgiCapturer : IDisposable
     private bool _cursorVisible;
     private bool _disposed;
 
+    private int _monitorLeft;
+    private int _monitorTop;
+
     public async Task StartCaptureAndStreamAsync(Stream networkStream, CancellationToken cancellationToken = default)
     {
-        // Cria um CTS vinculado ao CancellationToken externo para cancelar a captura em caso de erro de rede
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = linkedCts.Token;
 
@@ -62,19 +93,30 @@ public class DxgiCapturer : IDisposable
         }
 
         if (targetOutput == null)
-            throw new InvalidOperationException($"O output DXGI de índice {StreamSettings.TargetOutputIndex} não foi encontrado.");
+        {
+            Console.WriteLine($"[DxgiCapturer] Output no índice {StreamSettings.TargetOutputIndex} não encontrado. Usando monitor 0.");
+            adapter.EnumOutputs(0, out targetOutput);
+        }
+
+        if (targetOutput == null)
+            throw new InvalidOperationException("Nenhum display DXGI ativo foi encontrado.");
+
+        // Guarda o deslocamento do monitor na área de trabalho do Windows
+        var desktopBounds = targetOutput.Description.DesktopCoordinates;
+        _monitorLeft = desktopBounds.Left;
+        _monitorTop = desktopBounds.Top;
 
         using var output1 = targetOutput.QueryInterface<IDXGIOutput1>();
         _duplication = output1.DuplicateOutput(_device);
 
-        var packetChannel = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(StreamSettings.PacketChannelCapacity)
+        var packetChannel = Channel.CreateBounded<NetworkPacket>(new BoundedChannelOptions(StreamSettings.PacketChannelCapacity)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
             SingleWriter = true
         });
 
-        // Task consumidora gravando no Socket de rede
+        // Task 1: Envio de pacotes via TCP
         var writerTask = Task.Run(async () =>
         {
             var reader = packetChannel.Reader;
@@ -84,20 +126,32 @@ public class DxgiCapturer : IDisposable
                 {
                     while (reader.TryRead(out var packet))
                     {
-                        byte[] sizeHeader = BitConverter.GetBytes(packet.Length);
+                        await networkStream.WriteAsync(new byte[] { (byte)packet.Type }, 0, 1, token);
+                        byte[] sizeHeader = BitConverter.GetBytes(packet.Data.Length);
                         await networkStream.WriteAsync(sizeHeader, 0, 4, token);
-                        await networkStream.WriteAsync(packet, 0, packet.Length, token);
+                        await networkStream.WriteAsync(packet.Data, 0, packet.Data.Length, token);
                     }
                 }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DxgiCapturer] Cliente desconectado (Rede): {ex.Message}");
-                linkedCts.Cancel(); // Cancela o loop de captura DXGI imediatamente!
+                Console.WriteLine($"[DxgiCapturer] Erro na rede: {ex.Message}");
+                linkedCts.Cancel();
             }
         }, token);
 
+        // Task 2: Captura assíncrona do Cursor a 60 FPS independentes
+        var cursorTask = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested && !_disposed)
+            {
+                CheckAndSendCursor(packetChannel);
+                await Task.Delay(16, token);
+            }
+        }, token);
+
+        // Task 3 (Principal): Captura de Vídeo DXGI
         try
         {
             while (!token.IsCancellationRequested && !_disposed)
@@ -133,36 +187,15 @@ public class DxgiCapturer : IDisposable
                             _stagingTexture = _device.CreateTexture2D(textureDesc);
                         }
 
-                        if (frameInfo.PointerPosition.Visible)
-                        {
-                            _cursorVisible = true;
-                            _cursorX = frameInfo.PointerPosition.Position.X;
-                            _cursorY = frameInfo.PointerPosition.Position.Y;
-                        }
-
                         _device.ImmediateContext.CopyResource(_stagingTexture!, texture2D);
 
                         var dataBox = _device.ImmediateContext.Map(_stagingTexture!, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
                         try
                         {
-                            if (_cursorVisible)
-                            {
-                                unsafe
-                                {
-                                    CursorOverlay.Apply(
-                                        (byte*)dataBox.DataPointer,
-                                        dataBox.RowPitch,
-                                        width,
-                                        height,
-                                        _cursorX,
-                                        _cursorY);
-                                }
-                            }
-
                             byte[]? h264Packet = _encoder.EncodeFrame(dataBox.DataPointer, dataBox.RowPitch, width, height);
                             if (h264Packet != null)
                             {
-                                packetChannel.Writer.TryWrite(h264Packet);
+                                packetChannel.Writer.TryWrite(new NetworkPacket { Type = PacketType.Video, Data = h264Packet });
                             }
                         }
                         finally
@@ -182,12 +215,46 @@ public class DxgiCapturer : IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            Console.WriteLine($"[DxgiCapturer] Encerrando captura DXGI: {ex.Message}");
+            Console.WriteLine($"[DxgiCapturer] Encerrando captura: {ex.Message}");
         }
         finally
         {
             packetChannel.Writer.TryComplete();
-            try { await writerTask; } catch { }
+            try { await Task.WhenAll(writerTask, cursorTask); } catch { }
+        }
+    }
+
+    private void CheckAndSendCursor(Channel<NetworkPacket> channel)
+    {
+        var cursorInfo = new CURSORINFO { cbSize = Marshal.SizeOf(typeof(CURSORINFO)) };
+        if (GetCursorInfo(out cursorInfo))
+        {
+            bool isVisible = (cursorInfo.flags & CURSOR_SHOWING) != 0;
+
+            // Subtrai a posição inicial do monitor capturado
+            int localX = cursorInfo.ptScreenPos.x - _monitorLeft;
+            int localY = cursorInfo.ptScreenPos.y - _monitorTop;
+
+            if (isVisible)
+            {
+                if (!_cursorVisible || localX != _cursorX || localY != _cursorY)
+                {
+                    _cursorVisible = true;
+                    _cursorX = localX;
+                    _cursorY = localY;
+
+                    string cursorJson = $"{{\"X\":{_cursorX}, \"Y\":{_cursorY}, \"Visible\":true}}";
+                    byte[] cursorData = System.Text.Encoding.UTF8.GetBytes(cursorJson);
+                    channel.Writer.TryWrite(new NetworkPacket { Type = PacketType.Cursor, Data = cursorData });
+                }
+            }
+            else if (_cursorVisible)
+            {
+                _cursorVisible = false;
+                string cursorJson = "{\"Visible\":false}";
+                byte[] cursorData = System.Text.Encoding.UTF8.GetBytes(cursorJson);
+                channel.Writer.TryWrite(new NetworkPacket { Type = PacketType.Cursor, Data = cursorData });
+            }
         }
     }
 
@@ -207,7 +274,6 @@ public class DxgiCapturer : IDisposable
                 {
                     _encoder?.Dispose();
                     _encoder = null;
-
                     _stagingTexture?.Dispose();
                     _stagingTexture = null;
 
@@ -223,7 +289,7 @@ public class DxgiCapturer : IDisposable
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DxgiCapturer] Erro ao liberar recursos Direct3D/DXGI: {ex.Message}");
+                    Console.WriteLine($"[DxgiCapturer] Erro no Dispose: {ex.Message}");
                 }
             }
             _disposed = true;
