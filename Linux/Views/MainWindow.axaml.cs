@@ -102,51 +102,66 @@ public partial class MainWindow : Window
         }, DispatcherPriority.Render);
     }
 
+    private bool _isRenderingFrame = false;
+
     private void UpdateScreenBuffer(int x, int y, int width, int height, byte[] pixelData)
     {
         if (width <= 0 || height <= 0 || pixelData.Length == 0) return;
 
+        // Se a UI do Linux ainda estiver desenhando o quadro anterior, ignora o quadro acumulado 
+        // para evitar gargalo de fila e manter a exibição sempre em tempo real
+        if (_isRenderingFrame) return;
+
+        _isRenderingFrame = true;
+
         Dispatcher.UIThread.Post(() =>
         {
-            if (_bitmap == null || _bitmap.PixelSize.Width != width || _bitmap.PixelSize.Height != height)
+            try
             {
-                _bitmap = new WriteableBitmap(
-                    new PixelSize(width, height),
-                    new Vector(96, 96),
-                    PixelFormat.Bgra8888,
-                    AlphaFormat.Opaque);
-
-                ScreenImage.Source = _bitmap;
-            }
-
-            using (var lockBuffer = _bitmap.Lock())
-            {
-                unsafe
+                if (_bitmap == null || _bitmap.PixelSize.Width != width || _bitmap.PixelSize.Height != height)
                 {
-                    byte* ptr = (byte*)lockBuffer.Address.ToPointer();
-                    int stride = lockBuffer.RowBytes;
+                    _bitmap = new WriteableBitmap(
+                        new PixelSize(width, height),
+                        new Vector(96, 96),
+                        PixelFormat.Bgra8888,
+                        AlphaFormat.Opaque);
 
-                    fixed (byte* srcPtr = pixelData)
+                    ScreenImage.Source = _bitmap;
+                }
+
+                using (var lockBuffer = _bitmap.Lock())
+                {
+                    unsafe
                     {
-                        if (stride == width * 4 && x == 0 && y == 0)
-                        {
-                            Buffer.MemoryCopy(srcPtr, ptr, pixelData.Length, pixelData.Length);
-                        }
-                        else
-                        {
-                            for (int row = 0; row < height; row++)
-                            {
-                                int destOffset = ((y + row) * stride) + (x * 4);
-                                int srcOffset = row * width * 4;
+                        byte* ptr = (byte*)lockBuffer.Address.ToPointer();
+                        int stride = lockBuffer.RowBytes;
 
-                                Buffer.MemoryCopy(srcPtr + srcOffset, ptr + destOffset, width * 4, width * 4);
+                        fixed (byte* srcPtr = pixelData)
+                        {
+                            if (stride == width * 4 && x == 0 && y == 0)
+                            {
+                                Buffer.MemoryCopy(srcPtr, ptr, pixelData.Length, pixelData.Length);
+                            }
+                            else
+                            {
+                                for (int row = 0; row < height; row++)
+                                {
+                                    int destOffset = ((y + row) * stride) + (x * 4);
+                                    int srcOffset = row * width * 4;
+
+                                    Buffer.MemoryCopy(srcPtr + srcOffset, ptr + destOffset, width * 4, width * 4);
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            ScreenImage.InvalidateVisual();
+                ScreenImage.InvalidateVisual();
+            }
+            finally
+            {
+                _isRenderingFrame = false;
+            }
         }, DispatcherPriority.Render);
     }
 }

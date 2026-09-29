@@ -7,20 +7,20 @@ public static class StreamSettings
     public const int StreamPort = 45679;
     public const string DiscoveryMagicHeader = "SCRN_EXT_DISC_V1";
 
-    // Captura e codificacao
+    // Captura e Codificação
     public const int TargetOutputIndex = 1;
     public const int TargetFps = 60;
-    public const int BitRate = 12_000_000;
-    public const int KeyFrameInterval = 30;
+    public const int BitRate = 14_000_000;         // Subido levemente para melhorar qualidade a 60 FPS
+    public const int KeyFrameInterval = 60;        // 1 Keyframe por segundo a 60 FPS
     public const int MaxBFrames = 0;
     public const string EncoderPixelFormat = "NV12";
     public const string EncoderPreset = "ultrafast";
     public const string EncoderTune = "zerolatency";
     public const string EncoderProfile = "baseline";
 
-    // Desempenho e transporte
-    public const int AcquireNextFrameTimeoutMs = 8;
-    public const int PacketChannelCapacity = 1;
-    public const int SocketBufferSize = 1024 * 1024;
+    // Desempenho e Transporte
+    public const int AcquireNextFrameTimeoutMs = 16; // Sincronizado com o tempo de frame de 60Hz (~16.6ms)
+    public const int PacketChannelCapacity = 3;     // Previne drops acidentais durante pequenas variações de tempo
+    public const int SocketBufferSize = 2 * 1024 * 1024; // 2MB de buffer TCP para evitar acúmulo na placa de rede
     public const int DecoderThreadCount = 4;
 }
